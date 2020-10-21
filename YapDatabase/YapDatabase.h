@@ -285,6 +285,13 @@ extern NSString *const YapDatabaseModifiedExternallyKey;
  */
 - (nullable instancetype)initWithURL:(NSURL *)path options:(nullable YapDatabaseOptions *)options;
 
+/**
+ * Closes the sqlite database and should only be called prior to -dealloc.
+ *
+ * This is typically not needed as the database should be kept alive.
+ */
+- (void)close;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark Properties
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

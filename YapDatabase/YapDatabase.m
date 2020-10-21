@@ -118,7 +118,8 @@ static YDBLogHandler logHandler = nil;
 	YapDatabaseOptions *options;
 	
 	sqlite3 *db; // Used for setup & checkpoints
-	
+    BOOL closed;
+    
 	NSMutableArray *changesets;
 	uint64_t snapshot;
 	
@@ -649,64 +650,72 @@ static YDBLogHandler logHandler = nil;
 	return self;
 }
 
+- (void)close
+{
+    YDBLogVerbose(@"Close <%@ %p: databaseName=%@>", [self class], self, [databaseURL lastPathComponent]);
+
+    NSMutableDictionary *userInfo = [NSMutableDictionary dictionaryWithCapacity:3];
+    userInfo[YapDatabaseUrlKey]    = self.databaseURL;
+    userInfo[YapDatabaseUrlWalKey] = self.databaseURL_wal;
+    userInfo[YapDatabaseUrlShmKey] = self.databaseURL_shm;
+    
+    NSNotification *notification =
+      [NSNotification notificationWithName:YapDatabaseClosedNotification
+                                    object:nil // Cannot retain self within dealloc method
+                                  userInfo:userInfo];
+    
+    while ([connectionPoolValues count] > 0)
+    {
+        NSDictionary *value = [connectionPoolValues objectAtIndex:0];
+        
+        sqlite3 *aDb = (sqlite3 *)[[value objectForKey:YDBConnectionPoolValueKey_db] pointerValue];
+        
+        int status = sqlite3_close(aDb);
+        if (status != SQLITE_OK)
+        {
+            YDBLogError(@"Error in sqlite_close: %d %s", status, sqlite3_errmsg(aDb));
+        }
+        
+        [connectionPoolValues removeObjectAtIndex:0];
+        [connectionPoolDates removeObjectAtIndex:0];
+    }
+    
+    if (connectionPoolTimer)
+        dispatch_source_cancel(connectionPoolTimer);
+    
+    if (db) {
+        sqlite3_close(db);
+        db = NULL;
+    }
+    if (yap_vfs_shim) {
+        yap_vfs_shim_unregister(&yap_vfs_shim);
+    }
+    
+    [YapDatabaseManager deregisterDatabaseForPath:[databaseURL path]];
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] postNotification:notification];
+    });
+    
+    closed = YES;
+}
+
 - (void)dealloc
 {
-	YDBLogVerbose(@"Dealloc <%@ %p: databaseName=%@>", [self class], self, [databaseURL lastPathComponent]);
-	
-	NSMutableDictionary *userInfo = [NSMutableDictionary dictionaryWithCapacity:3];
-	userInfo[YapDatabaseUrlKey]    = self.databaseURL;
-	userInfo[YapDatabaseUrlWalKey] = self.databaseURL_wal;
-	userInfo[YapDatabaseUrlShmKey] = self.databaseURL_shm;
-	
-	NSNotification *notification =
-	  [NSNotification notificationWithName:YapDatabaseClosedNotification
-	                                object:nil // Cannot retain self within dealloc method
-	                              userInfo:userInfo];
-	
-	while ([connectionPoolValues count] > 0)
-	{
-		NSDictionary *value = [connectionPoolValues objectAtIndex:0];
-		
-		sqlite3 *aDb = (sqlite3 *)[[value objectForKey:YDBConnectionPoolValueKey_db] pointerValue];
-		
-		int status = sqlite3_close(aDb);
-		if (status != SQLITE_OK)
-		{
-			YDBLogError(@"Error in sqlite_close: %d %s", status, sqlite3_errmsg(aDb));
-		}
-		
-		[connectionPoolValues removeObjectAtIndex:0];
-		[connectionPoolDates removeObjectAtIndex:0];
-	}
-	
-	if (connectionPoolTimer)
-		dispatch_source_cancel(connectionPoolTimer);
-	
-	if (db) {
-		sqlite3_close(db);
-		db = NULL;
-	}
-	if (yap_vfs_shim) {
-		yap_vfs_shim_unregister(&yap_vfs_shim);
-	}
-	
-	[YapDatabaseManager deregisterDatabaseForPath:[databaseURL path]];
-	
+    if (!closed) {
+        YDBLogError(@"Database instance is deallocated without calling -close prior.");
+    }
+    
 #if !OS_OBJECT_USE_OBJC
-	if (internalQueue)
-		dispatch_release(internalQueue);
-	if (snapshotQueue)
-		dispatch_release(snapshotQueue);
-	if (writeQueue)
-		dispatch_release(writeQueue);
-	if (checkpointQueue)
-		dispatch_release(checkpointQueue);
+    if (internalQueue)
+        dispatch_release(internalQueue);
+    if (snapshotQueue)
+        dispatch_release(snapshotQueue);
+    if (writeQueue)
+        dispatch_release(writeQueue);
+    if (checkpointQueue)
+        dispatch_release(checkpointQueue);
 #endif
-	
-	dispatch_async(dispatch_get_main_queue(), ^{
-		
-		[[NSNotificationCenter defaultCenter] postNotification:notification];
-	});
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
