@@ -46,7 +46,9 @@
 
 #import <sys/socket.h>
 #import <netinet/in.h>
+#if !TARGET_OS_MACCATALYST
 #import <netinet6/in6.h>
+#endif
 #import <arpa/inet.h>
 #import <ifaddrs.h>
 #import <netdb.h>
